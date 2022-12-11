@@ -1,32 +1,11 @@
 require 'spec_helper'
 require 'sidekiq'
 require 'sidekiq/api'
+require 'sidekiq/fetch'
+require 'support/job'
+require 'support/proc_job'
 
-RSpec.describe Sidekiq::RateLimiter::Fetch do
-  before(:all) do
-    class Job
-      include Sidekiq::Worker
-      sidekiq_options 'queue'    => 'basic',
-                      'retry'    => false,
-                      'rate' => {
-                          'limit'  => 1,
-                          'period' => 1
-                      }
-      def perform(*args); end
-    end
-    class ProcJob
-      include Sidekiq::Worker
-      sidekiq_options 'queue'    => 'basic',
-                      'retry'    => false,
-                      'rate' => {
-                          'limit'  => ->(arg1, arg2) { arg2 },
-                          'name'   => ->(arg1, arg2) { arg2 },
-                          'period' => ->(arg1, arg2) { arg2 }
-                      }
-      def perform(arg1, arg2); end
-    end
-  end
-
+RSpec.describe Sidekiq::RateLimiter::FetchPatch do
   let(:options)       { { queues: [queue, another_queue, another_queue] } }
   let(:queue)         { 'basic' }
   let(:another_queue) { 'some_other_queue' }
@@ -34,26 +13,23 @@ RSpec.describe Sidekiq::RateLimiter::Fetch do
   let(:worker)        { Job }
   let(:proc_worker)   { ProcJob }
   let(:redis_class)   { Sidekiq.redis { |conn| conn.class } }
-
-  it 'should inherit from Sidekiq::BasicFetch' do
-    expect(described_class).to be < Sidekiq::BasicFetch
-  end
+  let(:patched_class) { Class.new(Sidekiq::BasicFetch) { prepend Sidekiq::RateLimiter::FetchPatch } }
 
   it 'should retrieve work with strict setting' do
     timeout =
-      if defined? Sidekiq::BasicFetch::TIMEOUT
-        Sidekiq::BasicFetch::TIMEOUT
+      if defined? patched_class::TIMEOUT
+        patched_class::TIMEOUT
       else
         Sidekiq::Fetcher::TIMEOUT
       end
 
-    fetch = described_class.new options.merge(:strict => true)
+    fetch = patched_class.new options.merge(:strict => true)
     expect(fetch.queues_cmd).to eql(["queue:#{queue}", "queue:#{another_queue}", timeout])
   end
 
   it 'should retrieve work', queuing: true do
     worker.perform_async(*args)
-    fetch   = described_class.new(options)
+    fetch   = patched_class.new(options)
     work    = fetch.retrieve_work
     parsed  = JSON.parse(work.respond_to?(:message) ? work.message : work.job)
 
@@ -74,7 +50,7 @@ RSpec.describe Sidekiq::RateLimiter::Fetch do
     expect_any_instance_of(Sidekiq::RateLimiter::Limit).to receive(:exceeded?).and_return(true)
     expect_any_instance_of(redis_class).to receive(:lpush).exactly(:once).and_call_original
 
-    fetch = described_class.new(options)
+    fetch = patched_class.new(options)
     expect(fetch.retrieve_work).to be_nil
 
     q = Sidekiq::Queue.new(queue)
@@ -89,8 +65,8 @@ RSpec.describe Sidekiq::RateLimiter::Fetch do
       with(anything(), {:limit => 2, :interval => 2, :name => "2"}).
       and_call_original
 
-    fetch = described_class.new(options)
-    work   = fetch.retrieve_work
+    fetch = patched_class.new(options)
+    work  = fetch.retrieve_work
   end
 
 end
