@@ -1,47 +1,45 @@
 require 'sidekiq'
-require 'sidekiq/fetch'
 require 'redis_rate_limiter'
 
 module Sidekiq::RateLimiter
   DEFAULT_LIMIT_NAME =
     'sidekiq-rate-limit'.freeze unless defined?(DEFAULT_LIMIT_NAME)
 
-  class Fetch < Sidekiq::BasicFetch
-    def retrieve_work
-      limit(super)
-    end
+  def self.limit(work)
+    message = JSON.parse(work.respond_to?(:message) ? work.message : work.job) rescue {}
 
-    def limit(work)
-      message = JSON.parse(work.respond_to?(:message) ? work.message : work.job) rescue {}
+    args      = message['args']
+    klass     = message['class']
+    rate      = Rate.new(message)
 
-      args      = message['args']
-      klass     = message['class']
-      rate      = Rate.new(message)
+    return work unless !!(klass && rate.valid?)
 
-      return work unless !!(klass && rate.valid?)
+    limit     = rate.limit
+    interval  = rate.interval
+    name      = rate.name
 
-      limit     = rate.limit
-      interval  = rate.interval
-      name      = rate.name
+    options = {
+      :limit    => (limit.respond_to?(:call) ? limit.call(*args) : limit).to_i,
+      :interval => (interval.respond_to?(:call) ? interval.call(*args) : interval).to_i,
+      :name     => (name.respond_to?(:call) ? name.call(*args) : name).to_s,
+    }
 
-      options = {
-        :limit    => (limit.respond_to?(:call) ? limit.call(*args) : limit).to_i,
-        :interval => (interval.respond_to?(:call) ? interval.call(*args) : interval).to_i,
-        :name     => (name.respond_to?(:call) ? name.call(*args) : name).to_s,
-      }
-
-      Sidekiq.redis do |conn|
-        lim = Limit.new(conn, options)
-        if lim.exceeded?(klass)
-          conn.lpush("queue:#{work.queue_name}", work.respond_to?(:message) ? work.message : work.job)
-          nil
-        else
-          lim.add(klass)
-          work
-        end
+    Sidekiq.redis do |conn|
+      lim = Limit.new(conn, options)
+      if lim.exceeded?(klass)
+        conn.lpush("queue:#{work.queue_name}", work.respond_to?(:message) ? work.message : work.job)
+        nil
+      else
+        lim.add(klass)
+        work
       end
     end
+  end
 
+  module FetchPatch
+    def retrieve_work
+      Sidekiq::RateLimiter.limit(super)
+    end
   end
 
   class Rate

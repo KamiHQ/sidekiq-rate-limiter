@@ -1,2 +1,2 @@
 require 'sidekiq-rate-limiter/version'
-require 'sidekiq-rate-limiter/fetch'
+require 'sidekiq-rate-limiter/fetch_patch'
