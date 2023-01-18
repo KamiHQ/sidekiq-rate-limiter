@@ -5,6 +5,6 @@ require 'sidekiq/fetch'
 Sidekiq.configure_server do |config|
   Sidekiq.options[:fetch] ||= Sidekiq::BasicFetch
   config.on(:startup) do
-    Sidekiq.options[:fetch].class_eval { prepend Sidekiq::RateLimiter::FetchPatch }
+    Sidekiq.options[:fetch].prepend(Sidekiq::RateLimiter::FetchPatch)
   end
 end
