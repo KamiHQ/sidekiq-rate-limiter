@@ -30,7 +30,7 @@ RSpec.describe Sidekiq::RateLimiter::Fetch do
   let(:options) do
     if Sidekiq::VERSION =~ /^(4|5|6\.[0-4])/
       { queues: [queue, another_queue, another_queue] }
-    elsif Sidekiq::VERSION.start_with?('7.')
+    elsif Sidekiq::VERSION.start_with?('7.') || Sidekiq::VERSION.start_with?('8.')
       config = Sidekiq.default_configuration
       config.queues = [queue, another_queue, another_queue]
       config.default_capsule
@@ -65,7 +65,7 @@ RSpec.describe Sidekiq::RateLimiter::Fetch do
 
     expected = [ "queue:#{queue}", "queue:#{another_queue}" ]
 
-    if !Sidekiq::VERSION.start_with?('7.')
+    if !Sidekiq::VERSION.start_with?('7.') && !Sidekiq::VERSION.start_with?('8.')
       options.merge!(strict: true)
       expected.push(timeout)
     end
